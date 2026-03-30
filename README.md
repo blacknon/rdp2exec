@@ -26,7 +26,7 @@ It is designed for environments where RDP is the primary reachable entry point a
 Note: In some environments, the server-side helper process, temporary files, or execution flow used by rdp2exec may be flagged as suspicious by antivirus or EDR products.
 This can occur because the tool uses remote process execution, temporary artifacts, and RDP-based communication patterns that may resemble malware behavior.
 
-rdp2exec is intended მხოლოდ for legitimate administrative, testing, and research purposes.
+rdp2exec is intended for legitimate administrative, testing, and research purposes.
 
 
 ### Structure
