@@ -577,7 +577,7 @@ def parser():
     p.add_argument("--helper-exe", default=os.environ.get("RDP2EXEC_HELPER_EXE", DEFAULT_HELPER_EXE))
     p.add_argument("--socket", default=os.environ.get("RDP2EXEC_SOCKET", DEFAULT_SOCKET))
     p.add_argument("--display", default=os.environ.get("DISPLAY", DEFAULT_DISPLAY))
-    p.add_argument("--bootstrap-delay", type=float, default=float(os.environ.get("RDP2EXEC_BOOTSTRAP_DELAY", "8.0")))
+    p.add_argument("--bootstrap-delay", type=float, default=float(os.environ.get("RDP2EXEC_BOOTSTRAP_DELAY", "5.0")))
     p.add_argument("--window-timeout", type=float, default=float(os.environ.get("RDP2EXEC_WINDOW_TIMEOUT", "45.0")))
     p.add_argument("--run-dialog-delay", type=float, default=float(os.environ.get("RDP2EXEC_RUN_DIALOG_DELAY", "0.8")))
     p.add_argument("--type-delay-ms", type=int, default=int(os.environ.get("RDP2EXEC_TYPE_DELAY_MS", "8")))
