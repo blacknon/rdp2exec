@@ -2,7 +2,9 @@ rdp2exec
 ===
 
 rdp2exec - A CLI tool that enables PowerShell/CMD access and command execution over RDP.
- 7
+
+![](./img/rdp2exec_demo.gif)
+
 ## Description
 
 `rdp2exec` is an experimental remote administration tool that uses RDP as its transport layer and establishes command or shell execution on a Windows host without requiring an additional permanently exposed management port.
