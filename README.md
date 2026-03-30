@@ -19,6 +19,14 @@ It is designed for environments where RDP is the primary reachable entry point a
 - Intended as an experimental and customizable OSS foundation rather than a finished product.
 
 
+### Note
+
+Note: In some environments, the server-side helper process, temporary files, or execution flow used by rdp2exec may be flagged as suspicious by antivirus or EDR products.
+This can occur because the tool uses remote process execution, temporary artifacts, and RDP-based communication patterns that may resemble malware behavior.
+
+rdp2exec is intended მხოლოდ for legitimate administrative, testing, and research purposes.
+
+
 ### Structure
 
 . **Launcher (Linux client side)**
@@ -33,6 +41,27 @@ It is designed for environments where RDP is the primary reachable entry point a
 
 ## Usage
 
-### Linux
+### Docker compose
 
-### Docker
+#### Build
+
+```bash
+cd ./path/to/this/dir
+docker compose build
+```
+
+#### Run
+
+```bash
+cd ./path/to/this/dir
+
+# shell: PowerShell
+docker compose
+
+# shell: CMD
+docker compose run
+
+# command
+
+
+```
