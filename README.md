@@ -41,6 +41,27 @@ rdp2exec is intended მხოლოდ for legitimate administrative, testing, 
 
 ## Usage
 
+### CLI
+
+```bash
+# PowerShell (default)
+rdp2exec user@hostname
+
+# CMD
+rdp2exec user@hostname cmd
+
+# Non-default port
+rdp2exec -p 3390 user@hostname
+
+# Password via argument
+rdp2exec -P 'secret' user@hostname powershell
+```
+
+`rdp2exec` accepts at most two positional arguments:
+
+- `user@hostname`
+- `powershell` or `cmd`
+
 ### Docker compose
 
 #### Build
@@ -56,12 +77,8 @@ docker compose build
 cd ./path/to/this/dir
 
 # shell: PowerShell
-docker compose
+docker compose run --rm --service-ports rdp2exec rdp2exec.py user@hostname
 
 # shell: CMD
-docker compose run
-
-# command
-
-
+docker compose run --rm --service-ports rdp2exec rdp2exec.py user@hostname cmd
 ```

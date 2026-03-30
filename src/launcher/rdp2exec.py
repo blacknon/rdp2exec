@@ -65,8 +65,17 @@ def resolve_password(args) -> str:
     if sys.stdin.isatty() and sys.stderr.isatty():
         return getpass.getpass("RDP password: ")
     raise RuntimeError(
-        "RDP password is required. Provide --password, set RDP_PASSWORD, or run from an interactive terminal for prompt input."
+        "RDP password is required. Provide -P/--password, set RDP_PASSWORD, or run from an interactive terminal for prompt input."
     )
+
+
+def parse_target(value: str) -> tuple[str, str]:
+    username, sep, host = value.rpartition("@")
+    if not sep or not username or not host:
+        raise argparse.ArgumentTypeError(
+            "target must be specified as user@hostname"
+        )
+    return username, host
 
 
 def get_terminal_size() -> tuple[int, int]:
@@ -205,6 +214,7 @@ def build_xfreerdp_command(args, title: str, share_dir: Path):
     cmd = [
         args.xfreerdp,
         f"/v:{args.host}",
+        f"/port:{args.port}",
         f"/u:{args.username}",
         "/from-stdin:force",
         "/dvc:rdp2exec",
@@ -220,8 +230,6 @@ def build_xfreerdp_command(args, title: str, share_dir: Path):
         cmd.append(f"/d:{args.domain}")
     if args.cert_ignore:
         cmd.append("/cert:ignore")
-    if args.extra:
-        cmd.extend(args.extra)
     return cmd
 
 
@@ -456,40 +464,34 @@ def do_connect(args):
 
 def parser():
     p = argparse.ArgumentParser(description="Linux FreeRDP rdp2exec ConPTY DVC PoC")
-    sub = p.add_subparsers(dest="cmd", required=True)
-
-    c = sub.add_parser("connect")
-    c.add_argument("--host", required=True)
-    c.add_argument("--username", required=True)
-    c.add_argument("--password", default=os.environ.get("RDP_PASSWORD", ""))
-    c.add_argument("--domain", default=os.environ.get("RDP_DOMAIN", ""))
-    c.add_argument("--child", choices=["powershell", "cmd"], default="powershell")
-    c.add_argument("--cert-ignore", action="store_true", default=True)
-    c.add_argument("--xfreerdp", default=os.environ.get("XFREERDP", DEFAULT_XFREERDP))
-    c.add_argument("--plugin-dir", default=os.environ.get("RDP2EXEC_PLUGIN_DIR", DEFAULT_PLUGIN_DIR))
-    c.add_argument("--plugin-name", default=os.environ.get("RDP2EXEC_PLUGIN_NAME", DEFAULT_PLUGIN_NAME))
-    c.add_argument("--helper-exe", default=os.environ.get("RDP2EXEC_HELPER_EXE", DEFAULT_HELPER_EXE))
-    c.add_argument("--socket", default=os.environ.get("RDP2EXEC_SOCKET", DEFAULT_SOCKET))
-    c.add_argument("--display", default=os.environ.get("DISPLAY", DEFAULT_DISPLAY))
-    c.add_argument("--bootstrap-delay", type=float, default=float(os.environ.get("RDP2EXEC_BOOTSTRAP_DELAY", "8.0")))
-    c.add_argument("--window-timeout", type=float, default=float(os.environ.get("RDP2EXEC_WINDOW_TIMEOUT", "45.0")))
-    c.add_argument("--run-dialog-delay", type=float, default=float(os.environ.get("RDP2EXEC_RUN_DIALOG_DELAY", "0.8")))
-    c.add_argument("--type-delay-ms", type=int, default=int(os.environ.get("RDP2EXEC_TYPE_DELAY_MS", "8")))
-    c.add_argument("--accept-timeout", type=float, default=float(os.environ.get("RDP2EXEC_ACCEPT_TIMEOUT", "60.0")))
-    c.add_argument("--drive-name", default=os.environ.get("RDP2EXEC_DRIVE_NAME", DEFAULT_DRIVE_NAME))
-    c.add_argument("--share-dir", default=os.environ.get("RDP2EXEC_SHARE_DIR", ""))
-    c.add_argument("--enable-clipboard", action="store_true", default=bool(int(os.environ.get("RDP2EXEC_ENABLE_CLIPBOARD", "0"))))
-    c.add_argument("--debug", action="store_true", default=bool(int(os.environ.get("RDP2EXEC_DEBUG", "0"))))
-    c.add_argument("extra", nargs=argparse.REMAINDER)
+    p.add_argument("target", type=parse_target, help="Remote target in user@hostname format")
+    p.add_argument("child", nargs="?", choices=["powershell", "cmd"], default="powershell")
+    p.add_argument("-p", "--port", type=int, default=int(os.environ.get("RDP_PORT", "3389")))
+    p.add_argument("-P", "--password", default=os.environ.get("RDP_PASSWORD", ""))
+    p.add_argument("-d", "--domain", default=os.environ.get("RDP_DOMAIN", ""))
+    p.add_argument("--cert-ignore", action="store_true", default=True)
+    p.add_argument("--xfreerdp", default=os.environ.get("XFREERDP", DEFAULT_XFREERDP))
+    p.add_argument("--plugin-dir", default=os.environ.get("RDP2EXEC_PLUGIN_DIR", DEFAULT_PLUGIN_DIR))
+    p.add_argument("--plugin-name", default=os.environ.get("RDP2EXEC_PLUGIN_NAME", DEFAULT_PLUGIN_NAME))
+    p.add_argument("--helper-exe", default=os.environ.get("RDP2EXEC_HELPER_EXE", DEFAULT_HELPER_EXE))
+    p.add_argument("--socket", default=os.environ.get("RDP2EXEC_SOCKET", DEFAULT_SOCKET))
+    p.add_argument("--display", default=os.environ.get("DISPLAY", DEFAULT_DISPLAY))
+    p.add_argument("--bootstrap-delay", type=float, default=float(os.environ.get("RDP2EXEC_BOOTSTRAP_DELAY", "8.0")))
+    p.add_argument("--window-timeout", type=float, default=float(os.environ.get("RDP2EXEC_WINDOW_TIMEOUT", "45.0")))
+    p.add_argument("--run-dialog-delay", type=float, default=float(os.environ.get("RDP2EXEC_RUN_DIALOG_DELAY", "0.8")))
+    p.add_argument("--type-delay-ms", type=int, default=int(os.environ.get("RDP2EXEC_TYPE_DELAY_MS", "8")))
+    p.add_argument("--accept-timeout", type=float, default=float(os.environ.get("RDP2EXEC_ACCEPT_TIMEOUT", "60.0")))
+    p.add_argument("--drive-name", default=os.environ.get("RDP2EXEC_DRIVE_NAME", DEFAULT_DRIVE_NAME))
+    p.add_argument("--share-dir", default=os.environ.get("RDP2EXEC_SHARE_DIR", ""))
+    p.add_argument("--enable-clipboard", action="store_true", default=bool(int(os.environ.get("RDP2EXEC_ENABLE_CLIPBOARD", "0"))))
+    p.add_argument("--debug", action="store_true", default=bool(int(os.environ.get("RDP2EXEC_DEBUG", "0"))))
     return p
 
 
 def main():
     args = parser().parse_args()
-    if args.cmd == "connect":
-        do_connect(args)
-    else:
-        raise SystemExit(2)
+    args.username, args.host = args.target
+    do_connect(args)
 
 
 if __name__ == "__main__":
