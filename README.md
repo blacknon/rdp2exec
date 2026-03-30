@@ -1,3 +1,38 @@
 rdp2exec
 ===
 
+rdp2exec - A CLI tool that enables PowerShell/CMD access and command execution over RDP.
+
+## Description
+
+`rdp2exec` is an experimental remote administration tool that uses RDP as its transport layer and establishes command or shell execution on a Windows host without requiring an additional permanently exposed management port.
+It is designed for environments where RDP is the primary reachable entry point and where operators want a programmable way to execute commands or attach to a shell over that connection.
+
+### Features
+
+- Uses RDP as the primary transport channel.
+- Supports remote command and shell access over an RDP session.
+- Uses drive redirection and a helper process for bootstrap and session setup.
+- Supports a ConPTY-based interactive shell path for a more terminal-like experience.
+- Designed for Linux-based clients using FreeRDP.
+- Aims to avoid requiring an additional permanently open management port on the target host.
+- Intended as an experimental and customizable OSS foundation rather than a finished product.
+
+
+### Structure
+
+. **Launcher (Linux client side)**
+   Starts the RDP session, prepares temporary artifacts, handles bootstrap, and bridges the local terminal to the remote session.
+
+2. **FreeRDP client plugin**
+   Establishes and manages the Dynamic Virtual Channel (DVC) used for data exchange between the client and the remote helper.
+
+3. **Windows helper / bridge**
+   Runs inside the remote Windows session, opens the virtual channel, and connects the channel to a spawned command process or ConPTY-backed shell.
+
+
+## Usage
+
+### Linux
+
+### Docker

@@ -1,0 +1,18 @@
+services:
+  rdp2exec:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    stdin_open: true
+    tty: true
+    environment:
+      DISPLAY: ":99"
+      ENABLE_VNC: "1"
+      VNC_PASSWORD: "testpass123"
+      RDP_PASSWORD: "${RDP_PASSWORD:-}"
+      RDP_DOMAIN: "${RDP_DOMAIN:-}"
+    ports:
+      - "5901:5900"
+    volumes:
+      - ./artifacts:/artifacts
+    command: ["bash"]
