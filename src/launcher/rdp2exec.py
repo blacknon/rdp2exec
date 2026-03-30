@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 import argparse
 import getpass
 import os
@@ -86,11 +88,58 @@ def get_terminal_size() -> tuple[int, int]:
         return 120, 40
 
 
-def build_run_wrapper(drive_name: str, child: str, cols: int, rows: int) -> str:
+def quote_powershell_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def quote_cmd_token(value: str) -> str:
+    operators = {"&", "&&", "||", "|", ">", ">>", "<", "2>", "2>>", "1>", "1>>"}
+    if value in operators:
+        return value
+    if any(ch.isspace() or ch in '&|<>^()"%' for ch in value):
+        return '"' + value.replace('"', '""') + '"'
+    return value
+
+
+def build_command_script(child: str, command: list[str]) -> tuple[str, str]:
+    if not command:
+        raise ValueError("command must not be empty")
+
+    if child == "powershell":
+        invocation = " ".join(quote_powershell_literal(part) for part in command)
+        script = textwrap.dedent(
+            f"""
+            $ErrorActionPreference = 'Stop'
+            & {invocation}
+            if ($null -ne $LASTEXITCODE) {{
+                exit $LASTEXITCODE
+            }}
+            exit 0
+            """
+        ).strip() + "\r\n"
+        return "rdp2exec-command.ps1", script
+
+    if child == "cmd":
+        invocation = " ".join(quote_cmd_token(part) for part in command)
+        script = textwrap.dedent(
+            f"""
+            @echo off
+            setlocal enableextensions
+            {invocation}
+            exit /b %ERRORLEVEL%
+            """
+        ).strip() + "\r\n"
+        return "rdp2exec-command.cmd", script
+
+    raise ValueError("child must be powershell or cmd")
+
+
+def build_run_wrapper(drive_name: str, child: str, cols: int, rows: int, command_file: str = "") -> str:
     exe_unc = f"\\\\tsclient\\{drive_name}\\rdp2exec_bridge.exe"
     child = child.lower().strip()
     if child not in {"powershell", "cmd"}:
         raise ValueError("child must be powershell or cmd")
+    command_arg = f' --command-file "{command_file}"' if command_file else ""
     return textwrap.dedent(
         rf'''
 @echo off
@@ -98,7 +147,7 @@ setlocal enableextensions
 set "RDP2EXEC_EXE=%TEMP%\rdp2exec-conpty-%RANDOM%%RANDOM%.exe"
 copy /Y "{exe_unc}" "%RDP2EXEC_EXE%" >nul
 if errorlevel 1 exit /b 11
-"%RDP2EXEC_EXE%" --channel rdp2exec --child {child} --cols {cols} --rows {rows}
+"%RDP2EXEC_EXE%" --channel rdp2exec --child {child} --cols {cols} --rows {rows}{command_arg}
 set "RDP2EXEC_RC=%ERRORLEVEL%"
 del /F /Q "%RDP2EXEC_EXE%" >nul 2>&1
 exit /b %RDP2EXEC_RC%
@@ -106,12 +155,19 @@ exit /b %RDP2EXEC_RC%
     ).strip() + "\r\n"
 
 
-def prepare_drive_share(base_dir: Path, helper_exe: Path, child: str, drive_name: str, cols: int, rows: int) -> tuple[Path, str]:
+def prepare_drive_share(base_dir: Path, helper_exe: Path, child: str, drive_name: str, cols: int, rows: int,
+                        command: list[str] | None = None) -> tuple[Path, str]:
     base_dir.mkdir(parents=True, exist_ok=True)
     staged_exe = base_dir / "rdp2exec_bridge.exe"
     staged_cmd = base_dir / "rdp2exec-run.cmd"
     staged_exe.write_bytes(helper_exe.read_bytes())
-    write_text(staged_cmd, build_run_wrapper(drive_name, child, cols, rows))
+    command_file = ""
+    if command:
+        command_name, command_text = build_command_script(child, command)
+        staged_command = base_dir / command_name
+        write_text(staged_command, command_text)
+        command_file = f"\\\\tsclient\\{drive_name}\\{command_name}"
+    write_text(staged_cmd, build_run_wrapper(drive_name, child, cols, rows, command_file=command_file))
     run_command = f'cmd.exe /c "\\\\tsclient\\{drive_name}\\rdp2exec-run.cmd"'
     return base_dir, run_command
 
@@ -254,6 +310,7 @@ def interactive_bridge(conn: socket.socket, debug: bool = False):
     stop = threading.Event()
     parser = FrameParser()
     cols, rows = get_terminal_size()
+    exit_code = 0
 
     def on_winch(signum, frame):
         if stop.is_set():
@@ -269,6 +326,7 @@ def interactive_bridge(conn: socket.socket, debug: bool = False):
     signal.signal(signal.SIGWINCH, on_winch)
 
     def recv_loop():
+        nonlocal exit_code
         sel = selectors.DefaultSelector()
         sel.register(conn, selectors.EVENT_READ)
         while not stop.is_set():
@@ -291,8 +349,8 @@ def interactive_bridge(conn: socket.socket, debug: bool = False):
                         text = payload.decode("utf-8", errors="replace")
                         debug_print(debug, f"\r\n[rdp2exec] remote error: {text}\r", file=sys.stderr)
                     elif frame_type == FRAME_EXIT:
-                        code = struct.unpack("<I", payload[:4])[0] if len(payload) >= 4 else 0
-                        debug_print(debug, f"\r\n[rdp2exec] remote exited with code {code}\r", file=sys.stderr)
+                        exit_code = struct.unpack("<I", payload[:4])[0] if len(payload) >= 4 else 0
+                        debug_print(debug, f"\r\n[rdp2exec] remote exited with code {exit_code}\r", file=sys.stderr)
                         stop.set()
                         return
                     else:
@@ -330,6 +388,37 @@ def interactive_bridge(conn: socket.socket, debug: bool = False):
             stop.set()
             t.join(timeout=3)
             signal.signal(signal.SIGWINCH, prev_winch)
+    return exit_code
+
+
+def command_bridge(conn: socket.socket, debug: bool = False):
+    parser = FrameParser()
+    cols, rows = get_terminal_size()
+    sel = selectors.DefaultSelector()
+    sel.register(conn, selectors.EVENT_READ)
+    send_frame(conn, FRAME_RESIZE, struct.pack("<HH", cols, rows))
+
+    while True:
+        events = sel.select(timeout=0.2)
+        if not events:
+            continue
+        data = conn.recv(8192)
+        if not data:
+            return 0
+        for frame_type, payload in parser.feed(data):
+            if frame_type == FRAME_READY:
+                continue
+            if frame_type == FRAME_OUTPUT:
+                os.write(sys.stdout.fileno(), payload)
+            elif frame_type == FRAME_ERROR:
+                text = payload.decode("utf-8", errors="replace")
+                debug_print(debug, f"\n[rdp2exec] remote error: {text}", file=sys.stderr)
+            elif frame_type == FRAME_EXIT:
+                code = struct.unpack("<I", payload[:4])[0] if len(payload) >= 4 else 0
+                debug_print(debug, f"\n[rdp2exec] remote exited with code {code}", file=sys.stderr)
+                return code
+            else:
+                debug_print(debug, f"\n[rdp2exec] unknown frame type {frame_type} len={len(payload)}", file=sys.stderr)
 
 
 class ProcessLogger:
@@ -402,9 +491,18 @@ def do_connect(args):
     env["DISPLAY"] = display
 
     cols, rows = get_terminal_size()
+    command = args.command if args.command else None
     with tempfile.TemporaryDirectory(prefix="rdp2exec-share-") if not args.share_dir else nullcontext(Path(args.share_dir)) as tmp:
         share_dir = Path(tmp) if isinstance(tmp, str) else tmp
-        share_dir, run_dialog_command = prepare_drive_share(share_dir, helper_exe, args.child, args.drive_name, cols, rows)
+        share_dir, run_dialog_command = prepare_drive_share(
+            share_dir,
+            helper_exe,
+            args.child,
+            args.drive_name,
+            cols,
+            rows,
+            command=command,
+        )
 
         cmd = build_xfreerdp_command(args, title, share_dir)
         debug_print(args.debug, "[rdp2exec] launching:", " ".join(shlex.quote(str(x)) for x in cmd), file=sys.stderr)
@@ -440,7 +538,9 @@ def do_connect(args):
                 )
                 conn = server.accept(timeout=args.accept_timeout)
                 try:
-                    interactive_bridge(conn, debug=args.debug)
+                    if command:
+                        return command_bridge(conn, debug=args.debug)
+                    return interactive_bridge(conn, debug=args.debug)
                 finally:
                     conn.close()
             except Exception:
@@ -466,6 +566,7 @@ def parser():
     p = argparse.ArgumentParser(description="Linux FreeRDP rdp2exec ConPTY DVC PoC")
     p.add_argument("target", type=parse_target, help="Remote target in user@hostname format")
     p.add_argument("child", nargs="?", choices=["powershell", "cmd"], default="powershell")
+    p.add_argument("command", nargs=argparse.REMAINDER)
     p.add_argument("-p", "--port", type=int, default=int(os.environ.get("RDP_PORT", "3389")))
     p.add_argument("-P", "--password", default=os.environ.get("RDP_PASSWORD", ""))
     p.add_argument("-d", "--domain", default=os.environ.get("RDP_DOMAIN", ""))
@@ -491,7 +592,7 @@ def parser():
 def main():
     args = parser().parse_args()
     args.username, args.host = args.target
-    do_connect(args)
+    raise SystemExit(do_connect(args) or 0)
 
 
 if __name__ == "__main__":

@@ -44,11 +44,17 @@ rdp2exec is intended მხოლოდ for legitimate administrative, testing, 
 ### CLI
 
 ```bash
-# PowerShell (default)
+# Login shell: PowerShell (default)
 rdp2exec user@hostname
 
-# CMD
+# Login shell: CMD
 rdp2exec user@hostname cmd
+
+# Command: Run a single PowerShell command without attaching a shell
+rdp2exec user@hostname powershell Get-Process
+
+# Command: Run a single CMD command without attaching a shell
+rdp2exec user@hostname cmd ipconfig /all
 
 # Non-default port
 rdp2exec -p 3390 user@hostname
@@ -57,10 +63,14 @@ rdp2exec -p 3390 user@hostname
 rdp2exec -P 'secret' user@hostname powershell
 ```
 
-`rdp2exec` accepts at most two positional arguments:
+`rdp2exec` accepts these positional arguments:
 
 - `user@hostname`
 - `powershell` or `cmd`
+- optional `command...`
+
+To execute a single command, append `command...` after the shell selector.
+If `command...` is omitted, `rdp2exec` starts an interactive shell as before.
 
 ### Docker compose
 

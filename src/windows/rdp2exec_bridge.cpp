@@ -157,6 +157,7 @@ struct Args
 {
   std::string channel = "rdp2exec";
   std::wstring child = L"powershell";
+  std::wstring command_file;
   short cols = 120;
   short rows = 40;
 };
@@ -176,6 +177,10 @@ static Args parse_args(int argc, wchar_t **argv)
     {
       args.child = argv[++i];
     }
+    else if (a == L"--command-file" && i + 1 < argc)
+    {
+      args.command_file = argv[++i];
+    }
     else if (a == L"--cols" && i + 1 < argc)
     {
       args.cols = static_cast<short>(_wtoi(argv[++i]));
@@ -192,11 +197,37 @@ static Args parse_args(int argc, wchar_t **argv)
   return args;
 }
 
+static std::wstring quote_win32_arg(const std::wstring &value)
+{
+  std::wstring quoted = L"\"";
+  for (const wchar_t ch : value)
+  {
+    if (ch == L'"')
+    {
+      quoted += L'\\';
+    }
+    quoted += ch;
+  }
+  quoted += L"\"";
+  return quoted;
+}
+
 static std::wstring build_command_line(const Args &args)
 {
   if (_wcsicmp(args.child.c_str(), L"cmd") == 0)
   {
+    if (!args.command_file.empty())
+    {
+      return L"\"C:\\Windows\\System32\\cmd.exe\" /Q /D /C " + quote_win32_arg(args.command_file);
+    }
     return L"\"C:\\Windows\\System32\\cmd.exe\" /Q /K";
+  }
+
+  if (!args.command_file.empty())
+  {
+    return L"\"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" "
+           L"-NoLogo -NoProfile -ExecutionPolicy Bypass -File " +
+           quote_win32_arg(args.command_file);
   }
 
   return L"\"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" "
