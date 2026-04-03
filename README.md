@@ -95,3 +95,13 @@ docker compose run --rm --service-ports rdp2exec rdp2exec.py user@hostname
 # shell: CMD
 docker compose run --rm --service-ports rdp2exec rdp2exec.py user@hostname cmd
 ```
+
+#### Debug
+
+```bash
+# Expose the VNC port so you can inspect the RDP desktop in the container
+docker compose run --rm --service-ports -p 5900:5900 rdp2exec rdp2exec.py user@hostname
+```
+
+When the VNC port is opened, you can connect to `localhost:5900` with a VNC client and view the RDP screen used by `rdp2exec`.
+This is useful for debugging bootstrap issues or checking what is happening in the remote desktop session visually.
