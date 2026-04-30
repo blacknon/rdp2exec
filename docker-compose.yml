@@ -15,4 +15,5 @@ services:
       - "5901:5900"
     volumes:
       - ./artifacts:/artifacts
+      - .:/workspace/rdp2exec
     command: ["bash"]

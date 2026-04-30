@@ -227,15 +227,27 @@ def send_frame(conn: socket.socket, frame_type: int, payload: bytes = b""):
     conn.sendall(bytes([frame_type]) + struct.pack("<I", len(payload)) + payload)
 
 
+def wait_until(predicate, timeout: float, interval: float = 0.1):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        result = predicate()
+        if result:
+            return result
+        time.sleep(interval)
+    return None
+
+
 def wait_for_window(title: str, display: str, timeout: float):
     env = dict(os.environ)
     env["DISPLAY"] = display
-    deadline = time.time() + timeout
-    while time.time() < deadline:
+    def _search():
         proc = subprocess.run(["xdotool", "search", "--name", title], env=env, capture_output=True, text=True)
         if proc.returncode == 0 and proc.stdout.strip():
             return proc.stdout.strip().splitlines()[0]
-        time.sleep(0.2)
+        return None
+    window_id = wait_until(_search, timeout=timeout, interval=0.2)
+    if window_id:
+        return window_id
     raise TimeoutError(f"xfreerdp window with title '{title}' not found")
 
 
@@ -248,21 +260,39 @@ def focus_window(window_id: str, env: dict):
         subprocess.run(cmd, env=env, check=False, capture_output=True, text=True)
 
 
+def get_focused_window_id(env: dict) -> str | None:
+    proc = subprocess.run(["xdotool", "getwindowfocus"], env=env, capture_output=True, text=True)
+    if proc.returncode == 0:
+        value = proc.stdout.strip()
+        if value:
+            return value
+    return None
+
+
 def inject_command_via_run_dialog(title: str, command: str, display: str, window_timeout: float = 45.0,
-                                  run_dialog_delay: float = 0.8, type_delay_ms: int = 8):
+                                  run_dialog_delay: float = 0.8, type_delay_ms: int = 8, debug: bool = False):
+    debug_print(debug, f"[rdp2exec] waiting for desktop window: title={title!r} timeout={window_timeout:.1f}s", file=sys.stderr)
     window_id = wait_for_window(title, display, window_timeout)
+    debug_print(debug, f"[rdp2exec] desktop window detected: id={window_id}", file=sys.stderr)
     env = dict(os.environ)
     env["DISPLAY"] = display
 
+    debug_print(debug, f"[rdp2exec] focusing desktop window: id={window_id}", file=sys.stderr)
     focus_window(window_id, env)
+    focused = wait_until(lambda: get_focused_window_id(env) == window_id, timeout=2.0, interval=0.1)
+    debug_print(debug, f"[rdp2exec] desktop focus {'confirmed' if focused else 'not confirmed'}", file=sys.stderr)
     time.sleep(0.3)
+    debug_print(debug, "[rdp2exec] opening Run dialog", file=sys.stderr)
     subprocess.run(["xdotool", "key", "--window", window_id, "--clearmodifiers", "Super_L+r"], env=env,
                    check=True)
     time.sleep(run_dialog_delay)
+    debug_print(debug, f"[rdp2exec] typing bootstrap command via Run dialog (len={len(command)})", file=sys.stderr)
     subprocess.run(["xdotool", "type", "--window", window_id, "--delay", str(type_delay_ms),
                     "--clearmodifiers", command], env=env, check=True)
     time.sleep(0.15)
+    debug_print(debug, "[rdp2exec] submitting Run dialog command", file=sys.stderr)
     subprocess.run(["xdotool", "key", "--window", window_id, "Return"], env=env, check=True)
+    debug_print(debug, "[rdp2exec] bootstrap command submitted", file=sys.stderr)
 
 
 def build_xfreerdp_command(args, title: str, share_dir: Path):
@@ -465,6 +495,40 @@ class ProcessLogger:
             self._thread.join(timeout=timeout)
 
 
+def emit_recent_stderr(proc_logger: ProcessLogger | None, limit: int = 20):
+    if proc_logger is None:
+        return
+    recent = [line for line in proc_logger.recent() if line.strip()]
+    if not recent:
+        return
+    print("[rdp2exec] xfreerdp stderr (most recent):", file=sys.stderr)
+    for line in recent[-limit:]:
+        print(f"[xfreerdp] {line}", file=sys.stderr)
+
+
+def wait_for_desktop_session_ready(proc_logger: ProcessLogger | None, timeout: float, debug: bool = False):
+    if proc_logger is None:
+        return
+
+    readiness_patterns = (
+        "device_announce",
+        "registered [    drive] device",
+        "Loaded fake backend for rdpsnd",
+        "gdi_init_ex",
+    )
+
+    debug_print(debug, f"[rdp2exec] waiting for desktop session readiness (timeout={timeout:.1f}s)", file=sys.stderr)
+
+    def _ready():
+        recent = proc_logger.recent()
+        return any(pattern in line for line in recent for pattern in readiness_patterns)
+
+    if wait_until(_ready, timeout=timeout, interval=0.1):
+        debug_print(debug, "[rdp2exec] desktop session readiness signal observed", file=sys.stderr)
+    else:
+        debug_print(debug, "[rdp2exec] desktop readiness signal not observed before timeout; continuing", file=sys.stderr)
+
+
 class nullcontext:
     def __init__(self, value):
         self.value = value
@@ -480,6 +544,7 @@ def do_connect(args):
     ensure_plugin(args.plugin_dir, args.plugin_name)
     helper_exe = ensure_helper(args.helper_exe)
     password = resolve_password(args)
+    debug_print(args.debug, f"[rdp2exec] child={args.child}", file=sys.stderr)
 
     display = args.display
     os.environ["DISPLAY"] = display
@@ -492,6 +557,7 @@ def do_connect(args):
 
     cols, rows = get_terminal_size()
     command = args.command if args.command else None
+    debug_print(args.debug, f"[rdp2exec] local terminal size: cols={cols} rows={rows}", file=sys.stderr)
     with tempfile.TemporaryDirectory(prefix="rdp2exec-share-") if not args.share_dir else nullcontext(Path(args.share_dir)) as tmp:
         share_dir = Path(tmp) if isinstance(tmp, str) else tmp
         share_dir, run_dialog_command = prepare_drive_share(
@@ -503,6 +569,8 @@ def do_connect(args):
             rows,
             command=command,
         )
+        debug_print(args.debug, f"[rdp2exec] prepared drive share: path={share_dir}", file=sys.stderr)
+        debug_print(args.debug, f"[rdp2exec] desktop bootstrap command: {run_dialog_command}", file=sys.stderr)
 
         cmd = build_xfreerdp_command(args, title, share_dir)
         debug_print(args.debug, "[rdp2exec] launching:", " ".join(shlex.quote(str(x)) for x in cmd), file=sys.stderr)
@@ -524,10 +592,12 @@ def do_connect(args):
                 proc_logger.start(proc.stderr)
             try:
                 if proc.stdin is not None:
+                    debug_print(args.debug, "[rdp2exec] sending RDP password via stdin", file=sys.stderr)
                     proc.stdin.write((password + "\n").encode("utf-8"))
                     proc.stdin.flush()
                     proc.stdin.close()
-                time.sleep(args.bootstrap_delay)
+                debug_print(args.debug, "[rdp2exec] desktop mode waits for session readiness before bootstrap", file=sys.stderr)
+                wait_for_desktop_session_ready(proc_logger, timeout=args.bootstrap_delay, debug=args.debug)
                 inject_command_via_run_dialog(
                     title=title,
                     command=run_dialog_command,
@@ -535,21 +605,22 @@ def do_connect(args):
                     window_timeout=args.window_timeout,
                     run_dialog_delay=args.run_dialog_delay,
                     type_delay_ms=args.type_delay_ms,
+                    debug=args.debug,
                 )
+                debug_print(args.debug, f"[rdp2exec] waiting for bridge socket: path={server.path} timeout={args.accept_timeout:.1f}s", file=sys.stderr)
                 conn = server.accept(timeout=args.accept_timeout)
+                debug_print(args.debug, "[rdp2exec] bridge socket connected", file=sys.stderr)
                 try:
                     if command:
+                        debug_print(args.debug, "[rdp2exec] starting command bridge", file=sys.stderr)
                         return command_bridge(conn, debug=args.debug)
+                    debug_print(args.debug, "[rdp2exec] starting interactive bridge", file=sys.stderr)
                     return interactive_bridge(conn, debug=args.debug)
                 finally:
                     conn.close()
             except Exception:
                 if not args.debug and proc_logger is not None:
-                    recent = [line for line in proc_logger.recent() if line.strip()]
-                    if recent:
-                        print("[rdp2exec] xfreerdp stderr (most recent):", file=sys.stderr)
-                        for line in recent[-20:]:
-                            print(f"[xfreerdp] {line}", file=sys.stderr)
+                    emit_recent_stderr(proc_logger)
                 raise
             finally:
                 if proc.poll() is None:

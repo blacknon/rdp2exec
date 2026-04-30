@@ -94,6 +94,10 @@ docker compose run --rm --service-ports rdp2exec rdp2exec.py user@hostname
 
 # shell: CMD
 docker compose run --rm --service-ports rdp2exec rdp2exec.py user@hostname cmd
+
+# Use the checked-out launcher directly while iterating on Python changes
+docker compose run --rm --service-ports rdp2exec \
+  python3 /workspace/rdp2exec/src/launcher/rdp2exec.py user@hostname
 ```
 
 #### Debug
@@ -105,3 +109,11 @@ docker compose run --rm --service-ports -p 5900:5900 rdp2exec rdp2exec.py user@h
 
 When the VNC port is opened, you can connect to `localhost:5900` with a VNC client and view the RDP screen used by `rdp2exec`.
 This is useful for debugging bootstrap issues or checking what is happening in the remote desktop session visually.
+
+### Desktop bootstrap notes
+
+In desktop mode, `rdp2exec` waits for FreeRDP session-readiness signals such as desktop initialization and drive registration before sending `Win+R`.
+This is more reliable than sending the bootstrap keys immediately after the RDP window appears.
+
+If you need more detail, add `--debug`.
+The launcher will print progress such as desktop window detection, session readiness, Run-dialog injection, and bridge connection timing.
